@@ -1,0 +1,92 @@
+on:
+  - pull_request
+  - push
+
+name: ci-mssql
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }}-mssql-${{ matrix.mssql.version }}
+
+    env:
+      EXTENSIONS: pdo, pdo_sqlsrv
+      XDEBUG_MODE: coverage, develop
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - 7.4
+          - 8.0
+          - 8.1
+          - 8.2
+          - 8.3
+          - 8.4
+
+        mssql:
+          - version: server:2022-latest
+            mssql-tool: /opt/mssql-tools18/bin/sqlcmd -C
+
+        include:
+          - php: 7.4
+            mssql:
+              version: server:2017-latest
+              mssql-tool: /opt/mssql-tools/bin/sqlcmd
+          - php: 8.0
+            mssql:
+              version: server:2019-latest
+              mssql-tool: /opt/mssql-tools18/bin/sqlcmd -C
+
+    services:
+      mssql:
+          image: mcr.microsoft.com/mssql/${{ matrix.mssql.version }}
+          env:
+              SA_PASSWORD: YourStrong!Passw0rd
+              ACCEPT_EULA: Y
+              MSSQL_PID: Developer
+          ports:
+              - 1433:1433
+          options: --name=mssql --health-cmd="${{ matrix.mssql.mssql-tool }} -S localhost -U SA -P 'YourStrong!Passw0rd' -Q 'SELECT 1'" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create MS SQL Database
+        run: docker exec -i mssql ${{ matrix.mssql.mssql-tool }} -S localhost -U SA -P 'YourStrong!Passw0rd' -Q 'CREATE DATABASE yiitest'
+
+      - name: Install PHP with extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          coverage: xdebug
+          extensions: ${{ env.EXTENSIONS }}
+          ini-values: date.timezone='UTC'
+          php-version: ${{ matrix.php }}
+          tools: composer:v2, pecl
+
+      - name: Update composer
+        run: composer self-update
+
+      - name: Install dependencies with composer
+        if: matrix.php != '8.4'
+        run: composer update --prefer-dist --no-interaction --no-progress --optimize-autoloader --ansi
+
+      - name: Install dependencies with PHP 8.4.
+        if: matrix.php == '8.4'
+        run: composer update --prefer-dist --no-interaction --no-progress --optimize-autoloader --ignore-platform-reqs --ansi
+
+      - name: Run MSSQL tests with PHPUnit and generate coverage.
+        run: vendor/bin/phpunit --group mssql --coverage-clover=coverage.xml --colors=always
+
+      - name: Upload coverage to Codecov.
+        if: matrix.php == '7.4'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
