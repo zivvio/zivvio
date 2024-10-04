@@ -1,0 +1,77 @@
+diff --git a/framework/CHANGELOG.md b/framework/CHANGELOG.md
+index 55f9605adfc..294810f9fc7 100644
+--- a/framework/CHANGELOG.md
++++ b/framework/CHANGELOG.md
+@@ -7,6 +7,8 @@ Yii Framework 2 Change Log
+ - Bug #20232: Fix regression introduced in `GHSA-cjcc-p67m-7qxm` while attaching behavior defined by `__class` array key (erickskrauch)
+ - Bug #20231: Fix regression introduced in #20167 in `yii\validators\FileValidator` (bizley)
+ - Enh #20247: Support for variadic console controller action methods (brandonkelly)
++- Bug #20256: Add support for dropping views in MSSQL server when running migrate/fresh (ambrozt)
++- Enh #20248: Add support for attaching behaviors in configurations with Closure (timkelty)
+ 
+ 2.0.51 July 18, 2024
+ --------------------
+diff --git a/framework/base/Component.php b/framework/base/Component.php
+index 7838f4b1da2..937de6b44e7 100644
+--- a/framework/base/Component.php
++++ b/framework/base/Component.php
+@@ -190,6 +190,8 @@ public function __set($name, $value)
+             $name = trim(substr($name, 3));
+             if ($value instanceof Behavior) {
+                 $this->attachBehavior($name, $value);
++            } elseif ($value instanceof \Closure) {
++                $this->attachBehavior($name, call_user_func($value));
+             } elseif (isset($value['__class']) && is_subclass_of($value['__class'], Behavior::class)) {
+                 $this->attachBehavior($name, Yii::createObject($value));
+             } elseif (!isset($value['__class']) && isset($value['class']) && is_subclass_of($value['class'], Behavior::class)) {
+diff --git a/framework/console/controllers/MigrateController.php b/framework/console/controllers/MigrateController.php
+index 315440f3bb5..104c6865749 100644
+--- a/framework/console/controllers/MigrateController.php
++++ b/framework/console/controllers/MigrateController.php
+@@ -333,6 +333,7 @@ private function isViewRelated($errorMessage)
+         $dropViewErrors = [
+             'DROP VIEW to delete view', // SQLite
+             'SQLSTATE[42S02]', // MySQL
++            'is a view. Use DROP VIEW', // Microsoft SQL Server
+         ];
+ 
+         foreach ($dropViewErrors as $dropViewError) {
+diff --git a/framework/messages/zh-TW/yii.php b/framework/messages/zh-TW/yii.php
+index ff206fe66e9..598b2b9de71 100644
+--- a/framework/messages/zh-TW/yii.php
++++ b/framework/messages/zh-TW/yii.php
+@@ -24,7 +24,7 @@
+  * NOTE: this file must be saved in UTF-8 encoding.
+  */
+ return [
+-    ' and ' => '',
++    ' and ' => ' 與 ',
+     '"{attribute}" does not support operator "{operator}".' => '',
+     '(not set)' => '(未設定)',
+     'Action not found.' => '',
+@@ -51,7 +51,7 @@
+     'Please fix the following errors:' => '請修正以下錯誤：',
+     'Please upload a file.' => '請上傳一個檔案。',
+     'Showing <b>{begin, number}-{end, number}</b> of <b>{totalCount, number}</b> {totalCount, plural, one{item} other{items}}.' => '第 <b>{begin, number}-{end, number}</b> 項，共 <b>{totalCount, number}</b> 項資料.',
+-    'The combination {values} of {attributes} has already been taken.' => '',
++    'The combination {values} of {attributes} has already been taken.' => '{attribute} 的值 "{value}" 已經被佔用了。',
+     'The file "{file}" is not an image.' => '檔案 "{file}" 不是一個圖片檔案。',
+     'The file "{file}" is too big. Its size cannot exceed {formattedLimit}.' => '檔案"{file}"太大了。它的大小不可以超過{formattedLimit}。',
+     'The file "{file}" is too small. Its size cannot be smaller than {formattedLimit}.' => '文件"{file}"太小了。它的大小不可以小於{formattedLimit}。',
+diff --git a/tests/framework/base/ComponentTest.php b/tests/framework/base/ComponentTest.php
+index d16671a5fa1..8f9f3ba5408 100644
+--- a/tests/framework/base/ComponentTest.php
++++ b/tests/framework/base/ComponentTest.php
+@@ -366,6 +366,12 @@ public function testAttachBehavior()
+         } catch (InvalidConfigException $e) {
+             $this->assertSame('Class is not of type yii\base\Behavior or its subclasses', $e->getMessage());
+         }
++
++        $component = new NewComponent();
++        $component->{'as f'} = function () {
++            return new NewBehavior();
++        };
++        $this->assertNotNull($component->getBehavior('f'));
+     }
+ 
+     public function testAttachBehaviors()
