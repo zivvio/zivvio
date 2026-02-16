@@ -42,7 +42,7 @@ jobs:
           tools: pecl
 
       - name: Install Memcached.
-        uses: niden/actions-memcached@v7
+        uses: niden/actions-memcached@v8
 
       - name: Install dependencies.
         run: composer install $DEFAULT_COMPOSER_FLAGS
